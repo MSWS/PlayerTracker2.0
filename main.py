@@ -1,18 +1,27 @@
-import asyncio
+# Imports
 import os
+import shutil
+import math
 import time
 import datetime
-import math
-from enum import Enum
 
+import asyncio
 import discord
 import yaml
-from discord.ext import commands
-from slugify import slugify
-import shutil
 
 import ServerPinger as sp
 import discordUtils as dUtils
+import matplotlib as mpl
+
+mpl.use("Agg")
+import matplotlib.pyplot as plt
+from scipy.ndimage.filters import gaussian_filter1d
+
+from discord.ext import commands
+from slugify import slugify
+from enum import Enum
+
+# Global Variables
 
 dir = os.path.dirname(os.path.realpath(__file__))
 conDir = dir + "/config.yml"
@@ -34,15 +43,7 @@ client = commands.Bot(".")
 config = {}
 
 
-def prepareConfig():
-    global config
-    if not os.path.exists(conDir):
-        with open(conDir, "w+", encoding="utf-8") as config:
-            yaml.dump(default, config, sort_keys=False)
-    with open(conDir, encoding="utf-8") as cFile:
-        config = yaml.full_load(cFile)
-
-
+# Main
 async def main():
     global players
     global config
@@ -63,67 +64,11 @@ async def main():
     while True:
         for server in servers:
             server.refresh()
-            for player in server.players.values():
-                player.save()
         await sendPlaytimes(servers)
-        await asyncio.sleep(5)
+        await asyncio.sleep(20)
 
 
-guildmessages = {}
-
-
-async def sendPlaytimes(servers):
-    global guildmessages
-    for server in servers:
-        for guild in client.guilds:
-            if guild.id not in guildmessages.keys():
-                guildmessages[guild.id] = {}
-            if server.name not in guildmessages[guild.id].keys():
-                guildmessages[guild.id][server.name] = None
-
-            newMessage = createEmbed(server.name + " Player List",
-                                     "\n".join(cleanList(server.playerNames)) if server.playerNames else "No Players",
-                                     color=discord.Color.blue())
-
-            footer = ""
-
-            if server.joined:
-                footer += "[+] " + ", ".join(server.joined)
-                if server.disconnected:
-                    footer += "\n"
-            if server.disconnected:
-                footer += "[-] " + ", ".join(server.disconnected)
-
-            footer += "\nLast Updated at " + datetime.datetime.now().strftime("%I:%M %p")
-
-            newMessage.set_footer(text=footer)
-            newMessage.add_field(name="Map", value=server.map)
-            newMessage.add_field(name="Players", value=str(
-                len(server.players)) + "/" + str(server.maxPlayers))
-
-            message: discord.Message = guildmessages[guild.id][server.name]
-
-            channel: discord.TextChannel = getChannel(guild, config["ChannelName"])
-            guild: discord.Guild
-
-            if message is None:
-                message = await channel.send(
-                    embed=createEmbed(server.name + " Player List", "No Players", color=discord.Color.red()))
-
-            guildmessages[guild.id][server.name] = message
-            await message.edit(embed=newMessage)
-
-
-def createEmbed(title, desc, color=discord.Colour.default(), url=None):
-    return discord.Embed(title=title, description=desc, color=color, url=url)
-
-
-def getChannel(guild, name):
-    for channel in guild.text_channels:
-        if channel.name == name:
-            return channel
-
-
+# Classes
 class Server(object):
     def __init__(self, name, address, port):
         self.name = name
@@ -134,7 +79,8 @@ class Server(object):
         self.playerNames = []
         self.players = {}
         self.oldPlayers = []
-        self.maxPlayers = sp.getInfo(self.address, self.port)["max_players"]
+        info = sp.getInfo(self.address, self.port)
+        self.maxPlayers = info["max_players"] if info else 32
         self.disconnected = []
         self.joined = []
         self.map = None
@@ -145,6 +91,7 @@ class Server(object):
             self.online = False
             print(self.name, "is not online")
             return
+        self.online = True
         info = sp.getInfo(self.address, self.port)
         self.map = info["map"] if info else self.map
         players = sp.getPlayers(self.address, self.port)
@@ -170,13 +117,91 @@ class Server(object):
                 continue
             p: Player = self.players[player]
             p.logoff()
+            del self.players[player]
 
         self.oldPlayers = self.playerNames
+
+        for player in self.players:
+            player.save()
 
     def __str__(self):
         return "[{}|{}|{}|{}|{}|{}]".replace("|", separator).format(self.name, self.address, self.port, self.lastOnline,
                                                                     self.online,
                                                                     self.playerNames)
+
+
+def prepareConfig():
+    global config
+    if not os.path.exists(conDir):
+        with open(conDir, "w+", encoding="utf-8") as config:
+            yaml.dump(default, config, sort_keys=False)
+    with open(conDir, encoding="utf-8") as cFile:
+        config = yaml.full_load(cFile)
+
+
+guildmessages = {}
+
+
+async def sendPlaytimes(servers):
+    global guildmessages
+    for server in servers:
+        for guild in client.guilds:
+            if guild.id not in guildmessages.keys():
+                guildmessages[guild.id] = {}
+            if server.name not in guildmessages[guild.id].keys():
+                guildmessages[guild.id][server.name] = None
+
+            msg = "No Players" if server.online else "Offline"
+            if server.online and server.playerNames:
+                msg = "\n".join(cleanList(server.playerNames))
+
+            newMessage = createEmbed(server.name + " Player List", msg,
+                                     color=discord.Color.blue())
+
+            footer = ""
+
+            if server.joined:
+                footer += "[+] " + ", ".join(server.joined)
+                if server.disconnected:
+                    footer += "\n"
+            if server.disconnected:
+                footer += "[-] " + ", ".join(server.disconnected)
+
+            footer += "\nLast Updated at " + datetime.datetime.now().strftime("%I:%M %p")
+
+            newMessage.set_footer(text=footer)
+            if server.online:
+                newMessage.add_field(name="Map", value=server.map)
+                newMessage.add_field(name="Players", value=str(
+                    len(server.players)) + "/" + str(server.maxPlayers))
+            else:
+                newMessage.add_field(name="Last Online", value=formatTime(time.time() - server.lastOnline))
+            message: discord.Message = guildmessages[guild.id][server.name]
+
+            channel: discord.TextChannel = getChannel(guild, config["ChannelName"])
+            guild: discord.Guild
+
+            if message is None:
+                message = await channel.send(
+                    embed=createEmbed(server.name + " Player List", "No Players", color=discord.Color.red()))
+
+            if message is None:
+                return
+            guildmessages[guild.id][server.name] = message
+            try:
+                await message.edit(embed=newMessage)
+            except discord.NotFound:
+                pass
+
+
+def createEmbed(title, desc, color=discord.Colour.default(), url=None):
+    return discord.Embed(title=title, description=desc, color=color, url=url)
+
+
+def getChannel(guild, name):
+    for channel in guild.text_channels:
+        if channel.name == name:
+            return channel
 
 
 def getNewPlayers(oldList, newList):
@@ -213,6 +238,16 @@ def loadPlayers():
             player = Player().construct(text)
             players.append(player)
     return players
+
+
+class Timespan(Enum):
+    SECONDS = 1
+    MINUTES = SECONDS * 60
+    HOURS = MINUTES * 60
+    DAYS = HOURS * 24
+    WEEKS = DAYS * 7
+    MONTHS = WEEKS * 4
+    YEARS = MONTHS * 12
 
 
 class Player(object):
@@ -294,6 +329,39 @@ class Player(object):
             return time.time()
         return self.sessions[-1].timeOff
 
+    def generatePlot(self, timespan=Timespan.MONTHS.value, separator=Timespan.DAYS.value):
+        results = []
+        min = time.time()
+        separations = math.ceil(timespan / separator)
+        index = 0
+
+        used = []
+
+        while min > time.time() - timespan:
+            total = 0
+
+            for sess in self.sessions[::-1]:
+                sess: Session
+                if sess.timeOn < min:
+                    break
+                if sess in used:
+                    continue
+                used.append(sess)
+                total += sess.getTime()
+            results.insert(separations - index, total / 60 / 60)
+
+            index += 1
+            min -= separator
+
+        plt.style.use("dark_background")
+        plt.clf()
+        plt.title("{}'s Playtime ({})".format(self.name, formatTime(timespan)))
+        plt.plot(results)
+        plt.ylabel("Hours")
+        plt.xlabel(formatTime(int(separator)))
+        plt.savefig("output")
+        return discord.File("output.png")
+
     def __str__(self):
         return "[{}\n{}]".format(self.name, "\n".join(self.sessions))
 
@@ -304,6 +372,9 @@ class Player(object):
         if not isinstance(other, Player):
             return False
         return self.name == other.name
+
+    def __lt__(self, other):
+        return self.getFirstSeen() > other.getFirstSeen()
 
 
 class Session(object):
@@ -349,16 +420,35 @@ class PlayerInfoCommand(dUtils.Command):
             return await dUtils.sendMessage(msg.channel,
                                             "Unable to find player by the name of {}.".format(dUtils.raw(name)))
         desc = ""
+
+        server = args[0] if args[0] in config["Servers"] else None
+
         for time in [Timespan.DAYS, Timespan.WEEKS, Timespan.MONTHS]:
-            desc += "{}: {}\n".format("1 " + time.name.title()[:-1], formatTime(player.getTimeSince(time.value)))
-        embed = createEmbed(player.name + "'s Information", "Online time since:\n" + desc)
+            desc += "{}: {}\n".format("1 " + time.name.title()[:-1],
+                                      formatTime(player.getTimeSince(time.value, server)))
+        embed = createEmbed(player.name + "'s Information", "Online time since:\n" + desc, discord.Color.orange())
 
         embed.add_field(name="First Seen",
                         value=datetime.datetime.fromtimestamp(player.getFirstSeen()).strftime("%I:%M:%S %p %m/%d/%Y"))
         embed.add_field(name="Last Seen",
                         value=datetime.datetime.fromtimestamp(player.getLastSeen()).strftime("%I:%M:%S %p %m/%d/%Y"))
 
-        return await dUtils.sendMessage(msg.channel, embed)
+        serverRank = {}
+        for sess in player.sessions:
+            sess: Session
+            serverRank[sess.server] = serverRank[
+                                          sess.server] + sess.getTime() if sess.server in serverRank else sess.getTime()
+
+        serverRank = dict(sorted(serverRank.items(), key=lambda kv: (kv[0], kv[1]), reverse=True))
+
+        activeServers = ""
+
+        for server, time in serverRank.items():
+            activeServers += "{}: {}\n".format(server, formatTime(time))
+
+        embed.add_field(name="All Time", value=activeServers)
+
+        return [await dUtils.sendMessage(msg.channel, embed), await msg.channel.send(file=player.generatePlot())]
 
 
 def getPlayer(name):
@@ -374,7 +464,7 @@ def getPlayer(name):
 
 class HelpCommand(dUtils.Command):
     async def exec(self, msg: discord.Message, args):
-        desc = ["Format: >[command] <args>", ""]
+        desc = ["Format: .[command] <args>", ""]
 
         for cmd in dUtils.registeredCommands.values():
             cmd: dUtils.Command
@@ -396,6 +486,35 @@ class SaveCommand(dUtils.Command):
         return await dUtils.sendMessage(msg.channel, "Successfully saved player data.")
 
 
+class GetNewPlayers(dUtils.Command):
+    async def exec(self, msg: discord.Message, args):
+        global players
+        span = Timespan.DAYS.value
+        if len(args) > 0:
+            span = strToSeconds(" ".join(args))
+        newPlayers = []
+        minJoinTime = time.time() - span
+        for player in players:
+            if player.getFirstSeen() >= minJoinTime:
+                newPlayers.append(player)
+
+        result = []
+
+        newPlayers = sorted(newPlayers)
+
+        for player in newPlayers:
+            result.append("{} joined {} ago".format(player.name, formatTime(time.time() - player.getFirstSeen())))
+
+        pageable = dUtils.Pageable(result, "Players after {}".format(formatToDate(minJoinTime)), msg.author,
+                                   msg.channel)
+        pageable.color = discord.Color.dark_blue()
+        return await pageable.send()
+
+
+def formatToDate(time):
+    return datetime.datetime.fromtimestamp(time).strftime("%I:%M:%S %p %m/%d/%Y")
+
+
 def playerSort(a: Player, b: Player):
     return -1 if a.getTimeSince(-1) > b.getTimeSince(-1) else 1
 
@@ -406,6 +525,8 @@ def formatTime(seconds: int):
         t: Timespan
         if seconds >= t.value:
             result = t
+    if seconds == result.value:
+        return "1 " + result.name.title()[:-1]
     return "{:0.2f} {}".format(seconds / result.value, result.name.title())
 
 
@@ -413,17 +534,20 @@ class DeletePlaytimeCommand(dUtils.Command):
     async def exec(self, msg: discord.Message, args):
         if len(args) == 0:
             return [await dUtils.sendMessage(msg.channel, "Please specify a username or all")]
-        if not os.path.exists(dir + "/players/" + args[0] + ".txt") and args[0] != "all":
-            return await dUtils.sendMessage(msg.channel, "**{}** was not found.".format(dUtils.raw(args[0])))
-        return await ConfirmDelete("Do you really want to delete **{}** player data?".format(dUtils.raw(args[0])),
-                                   msg.author, args[0]).send(msg.channel)
+
+        p = getPlayer(" ".join(args))
+        name = p.name if p else " ".join(args)
+
+        if not os.path.exists(dir + "/players/" + slugify(name) + ".txt") and args[0] != "all":
+            return await dUtils.sendMessage(msg.channel, "**{}** was not found.".format(dUtils.raw(name)))
+        return await ConfirmDelete("Do you really want to delete **{}** player data?".format(dUtils.raw(name)),
+                                   msg.author, slugify(name)).send(msg.channel)
 
 
 class ConfirmDelete(dUtils.ConfirmMessage):
     def __init__(self, message, author, target):
         super().__init__(message, author)
         self.target = target
-        self.func = None
 
     async def confirm(self):
         global players
@@ -433,15 +557,10 @@ class ConfirmDelete(dUtils.ConfirmMessage):
             await updatePlayers()
             return await dUtils.sendMessage(self.sent.channel, "Successfully deleted all player data.")
         else:
+            players = loadPlayers()
+            await self.sent.channel.send("Successfully deleted player data of {}.".format(self.target),
+                                         file=discord.File(dir + "/players/" + self.target + ".txt"))
             os.remove(dir + "/players/" + self.target + ".txt")
-            await updatePlayers()
-            return await dUtils.sendMessage(self.sent.channel,
-                                            "Successfully deleted player data of {}.".format(self.target))
-
-
-class NewPlayersCommand(dUtils.Command):
-    async def exec(self, msg: discord.Message, args):
-        pass
 
 
 class PlaytimeCommand(dUtils.Command):
@@ -480,8 +599,7 @@ class PlaytimeCommand(dUtils.Command):
                 return page
 
             for p in players:
-                p: Player
-                leaderboard[p] = p.getTimeSince(span)
+                leaderboard[p] = p.getTimeSince(span if span else -1)
 
             page = 0
 
@@ -502,14 +620,66 @@ class PlaytimeCommand(dUtils.Command):
 
             return await embed.send()
         if len(args) == 2:
-            # could be player, timeframe
-            # or player, server
-            # if args[1] is numerical, timeframe, otherwise server
-            pass
+            target = getPlayer(args[0])
+            if target:
+                span = strToSeconds(args[1])
+                for p in players:
+                    if span:
+                        leaderboard[p] = p.getTimeSince(span)
+                    elif args[1] in config["Servers"]:
+                        leaderboard[p] = p.getTimeSince(-1, args[1])
+                    else:
+                        return await dUtils.sendMessage(msg.channel, "Unknown server/timespan.")
+                result = generateLeaderboard(leaderboard)
+                page = 0
+                embed = dUtils.Pageable(result,
+                                        "Leaderboard (" + (formatTime(span) if span else args[1]) + ")", msg.author,
+                                        msg.channel,
+                                        color=discord.Color.green())
+                for index, line in enumerate(result):
+                    if target.name in line:
+                        page = math.ceil(index / embed.size) - 1
+                        break
+                embed.page = page
 
-        if len(args) == 3:
-            # should be player, server, timeframe
-            pass
+                return await embed.send()
+
+            if args[0] in config["Servers"]:
+                span = strToSeconds(args[1])
+
+                for p in players:
+                    leaderboard[p] = p.getTimeSince(span, args[0])
+                result = generateLeaderboard(leaderboard)
+                embed = dUtils.Pageable(result,
+                                        "Leaderboard (" + args[0] + " | " + formatTime(span) + ")", msg.author,
+                                        msg.channel,
+                                        color=discord.Color.green())
+                return await embed.send()
+            return await dUtils.sendMessage(msg.channel, "Unknown arguments.")
+
+
+class GraphCommand(dUtils.Command):
+    async def exec(self, msg: discord.Message, args):
+        period = Timespan.DAYS.value
+        if len(args) < 2:
+            return await dUtils.sendMessage(msg.channel, "Please specify a player and timeframe.")
+
+        pLength = 0
+
+        for index, s in enumerate(args):
+            if strToSeconds(s):
+                pLength = index
+                break
+        player = getPlayer(" ".join(args[:pLength]))
+
+        if not player:
+            return await dUtils.sendMessage(msg.channel, "No playtime data for {}.".format(" ".join(args[:pLength])))
+
+        span = strToSeconds(args[pLength])
+        if len(args) > pLength + 1:
+            period = strToSeconds(args[-1])
+        graph = player.generatePlot(span, period)
+        return await msg.channel.send(file=graph)
 
 
 class RefreshCommand(dUtils.Command):
@@ -556,16 +726,6 @@ def getTimespan(c: str):
     if c == "y": return Timespan.YEARS
 
 
-class Timespan(Enum):
-    SECONDS = 1
-    MINUTES = SECONDS * 60
-    HOURS = MINUTES * 60
-    DAYS = HOURS * 24
-    WEEKS = DAYS * 7
-    MONTHS = WEEKS * 4
-    YEARS = MONTHS * 12
-
-
 async def updatePlayers():
     global players
     while True:
@@ -585,8 +745,14 @@ async def on_ready():
     dUtils.registerComand(
         DeletePlaytimeCommand("DeletePlaytime", "Delete's a player's playtime", aliases=["dp"],
                               permission="administrator"))
-    dUtils.registerComand(PlayerInfoCommand("PlayerInfo", "Get's playtime information", aliases=["pi"]))
+    dUtils.registerComand(PlayerInfoCommand("PlayerInfo", "Get's playtime information", "playerinfo [player]", ["pi"]))
     dUtils.registerComand(SaveCommand("Save", "Save player data"))
+    dUtils.registerComand(
+        GetNewPlayers("GetNewPlayers", "Lookup who has recently just joined the server", "getnewplayers <timespan>",
+                      ["gnp", "fnp", "np", "new"]))
+    dUtils.registerComand(
+        GraphCommand("Graph", "Generate graph of player's playtime", "graph [timespan] <period>",
+                     aliases=["g", "gg", "cg"]))
     dUtils.registerComand(HelpCommand("Help", "Gets help"))
     client.loop.create_task(main())
 

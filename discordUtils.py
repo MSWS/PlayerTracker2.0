@@ -267,6 +267,7 @@ class ConfirmMessage(object):
 
         @client.listen()
         async def on_reaction_add(reaction: discord.Reaction, user: discord.Member):
+            print("reaction received")
             if reaction.message.id != self.sent.id:
                 return
             if user != self.author:
