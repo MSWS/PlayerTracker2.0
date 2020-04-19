@@ -22,6 +22,14 @@ def getPlayers(address, port):
         return None
 
 
+def ping(address, port):
+    try:
+        with valve.source.a2s.ServerQuerier((address, port)) as server:
+            return server.ping()
+    except valve.source.NoResponseError:
+        return None
+
+
 def getPlayerNames(players):
     names = []
     for player in players:
