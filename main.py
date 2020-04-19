@@ -15,11 +15,10 @@ import discordUtils as dUtils
 import matplotlib as mpl
 
 mpl.use("Agg")
-import matplotlib.pyplot as plt
-from scipy.ndimage.filters import gaussian_filter1d
+import matplotlib.pyplot as plt  # pip install matplotlib
 
-from discord.ext import commands
-from slugify import slugify
+from discord.ext import commands  # pip install discord
+from slugify import slugify  # pip install python-slugify
 from enum import Enum
 
 # Global Variables
@@ -33,6 +32,7 @@ players = []
 servers = {}
 
 default = {
+    "Token": "https://discordapp.com/developers/applications/",
     "Servers": {
         "TTT": "66.85.80.171:27015",
         "JB": "66.85.80.170:27015",
@@ -50,15 +50,13 @@ zone = tz.gettz("US/Pacific")
 
 # Main
 async def main():
-    global players, config, servers
-    prepareConfig()
+    global players, servers
     servers = {}
     players = loadPlayers()
 
     for server in config["Servers"]:
         address = config["Servers"][server].split(":")[0]
         port = int(config["Servers"][server].split(":")[1])
-        # servers.append(Server(server, address, port))
         servers[server] = Server(server, address, port)
 
     client.loop.create_task(updatePlayers())
@@ -140,32 +138,32 @@ class Server(object):
         info = sp.getInfo(self.address, self.port)
         self.pings[pingIndex] = sp.ping(self.address, self.port)
 
-        map = info["map"] if info else None
+        newMap = info["map"] if info else None
 
-        if map:
-            if map != self.map:
-                self.maps[map] = 1 if map not in self.maps else self.maps[map] + 1
-            self.map = map
+        if newMap:
+            if newMap != self.map:
+                self.maps[newMap] = 1 if map not in self.maps else self.maps[newMap] + 1
+            self.map = newMap
 
-        players = sp.getPlayers(self.address, self.port)
+        online = sp.getPlayers(self.address, self.port)
         self.playerNames = []
-        if players:
-            self.playerNames = sp.getPlayerNames(players)
+        if online:
+            self.playerNames = sp.getPlayerNames(online)
 
         self.lastOnline = time.time()
 
         if self.oldPlayers == self.playerNames:
             return
 
-        self.joined = newPlayers = getNewPlayers(self.oldPlayers, self.playerNames)
-        self.disconnected = missingPlayers = getMissingPlayers(self.oldPlayers, self.playerNames)
+        self.joined = getNewPlayers(self.oldPlayers, self.playerNames)
+        self.disconnected = getMissingPlayers(self.oldPlayers, self.playerNames)
 
-        for player in newPlayers:
+        for player in self.joined:
             p = Player().createNew(player)
             p.logon(self)
             self.players[player] = p
 
-        for player in missingPlayers:
+        for player in self.disconnected:
             if player not in self.players:
                 continue
             p: Player = self.players[player]
@@ -177,34 +175,32 @@ class Server(object):
         for player in self.players.values():
             player.save()
 
-    def generatePlayerPlotValues(self, timespan=Timespan.MONTHS.value, separator=Timespan.HOURS.value,
+    def generatePlayerPlotValues(self, timespan=Timespan.MONTHS.value, sep=Timespan.HOURS.value,
                                  onlineFor=Timespan.MINUTES.value * 10):
         global players
         results = []
-        min = time.time() - timespan
-        separations = math.ceil(timespan / separator)
+        minimum = time.time() - timespan
+        separations = math.ceil(timespan / sep)
         index = 0
 
-        used = []
-
-        while min < time.time():
+        while minimum < time.time():
             total = 0
             online = []
             for player in players:
-                if player.wasOn(min - onlineFor, min) == self.name:
+                if player.wasOn(minimum - onlineFor, minimum) == self.name:
                     total += 1
                     online.append(player.name)
             if total or len(results):
                 results.insert(separations - index, total)
             index += 1
-            min += separator
+            minimum += sep
         return results
 
-    def generatePlayerPlot(self, timespan=Timespan.MONTHS.value, separator=Timespan.HOURS.value,
+    def generatePlayerPlot(self, timespan=Timespan.MONTHS.value, sep=Timespan.HOURS.value,
                            onlineFor=Timespan.MINUTES.value * 10):
-        return generatePlot(self.generatePlayerPlotValues(timespan, separator, onlineFor),
+        return generatePlot(self.generatePlayerPlotValues(timespan, sep, onlineFor),
                             self.name + "'s Player Count",
-                            formatTime(separator), "Players")
+                            formatTime(sep), "Players")
 
     def generateLatencyPlot(self):
         values = []
@@ -301,28 +297,28 @@ class Player(object):
             return time.time()
         return self.sessions[-1].timeOff
 
-    def wasOn(self, min, max):
+    def wasOn(self, small, large):
         for sess in self.sessions[::-1]:
-            if sess.timeOff < min:
+            if sess.timeOff < small:
                 break
-            if sess.timeOn > max:
+            if sess.timeOn > large:
                 continue
             return sess.server
 
-    def generatePlotValues(self, timespan=Timespan.MONTHS.value, separator=Timespan.DAYS.value):
+    def generatePlotValues(self, timespan=Timespan.MONTHS.value, sep=Timespan.DAYS.value):
         results = []
-        min = time.time()
-        separations = math.ceil(timespan / separator)
+        small = time.time()
+        separations = math.ceil(timespan / sep)
         index = 0
 
         used = []
 
-        while min > time.time() - timespan:
+        while small > time.time() - timespan:
             total = 0
 
             for sess in self.sessions[::-1]:
                 sess: Session
-                if sess.timeOn < min:
+                if sess.timeOn < small:
                     break
                 if sess in used:
                     continue
@@ -331,24 +327,13 @@ class Player(object):
             results.insert(separations - index, total / 60 / 60)
 
             index += 1
-            min -= separator
+            small -= sep
         return results
 
-    #
-    # def generatePlot(self, timespan=Timespan.MONTHS.value, separator=Timespan.DAYS.value):
-    #     plt.style.use("dark_background")
-    #     plt.clf()
-    #     plt.title("{}'s Playtime ({})".format(self.name, formatTime(timespan)))
-    #     plt.plot(self.generatePlotValues(timespan, separator))
-    #     plt.ylabel("Hours")
-    #     plt.xlabel(formatTime(int(separator)))
-    #     plt.savefig("output")
-    #     return discord.File("output.png")
-
-    def generatePlot(self, timespan=Timespan.MONTHS.value, separator=Timespan.DAYS.value):
-        plot = generatePlot(self.generatePlotValues(timespan, separator),
+    def generatePlot(self, timespan=Timespan.MONTHS.value, sep=Timespan.DAYS.value):
+        plot = generatePlot(self.generatePlotValues(timespan, sep),
                             "{}'s Playtime ({})".format(self.name, formatTime(timespan)),
-                            formatTime(int(separator)), "Hours")
+                            formatTime(int(sep)), "Hours")
         return plot
 
     def __str__(self):
@@ -414,9 +399,9 @@ class PlayerInfoCommand(dUtils.Command):
 
         server = args[0] if args[0] in config["Servers"] else None
 
-        for time in [Timespan.DAYS, Timespan.WEEKS, Timespan.MONTHS]:
-            desc += "{}: {}\n".format("1 " + time.name.title()[:-1],
-                                      formatTime(player.getTimeSince(time.value, server)))
+        for t in [Timespan.DAYS, Timespan.WEEKS, Timespan.MONTHS]:
+            desc += "{}: {}\n".format("1 " + t.name.title()[:-1],
+                                      formatTime(player.getTimeSince(t.value, server)))
         embed = createEmbed(player.name + "'s Information", "Online time since:\n" + desc, discord.Color.orange())
 
         embed.add_field(name="First Seen",
@@ -436,8 +421,8 @@ class PlayerInfoCommand(dUtils.Command):
 
         activeServers = ""
 
-        for server, time in serverRank.items():
-            activeServers += "{}: {}\n".format(server, formatTime(time))
+        for server, t in serverRank.items():
+            activeServers += "{}: {}\n".format(server, formatTime(t))
 
         embed.add_field(name="All Time", value=activeServers, inline=False)
 
@@ -641,12 +626,17 @@ class GraphCommand(dUtils.Command):
                 break
         player = getPlayer(" ".join(args[:pLength]))
 
-        if not player:
-            return await dUtils.sendMessage(msg.channel, "No playtime data for {}.".format(" ".join(args[:pLength])))
-
         span = strToSeconds(args[pLength])
         if len(args) > pLength + 1:
             period = strToSeconds(args[-1])
+
+        if args[0] in servers:
+            server = servers[args[0]]
+            return await msg.channel.send(server.generatePlayerPlot(span, period))
+
+        if not player:
+            return await dUtils.sendMessage(msg.channel, "No playtime data for {}.".format(" ".join(args[:pLength])))
+
         graph = player.generatePlot(span, period)
         return await msg.channel.send(file=graph)
 
@@ -690,8 +680,8 @@ class StatisticsCommand(dUtils.Command):
 
         desc += "\nMaps\n"
 
-        for map, value in maps.items():
-            desc += "{}: {}\n".format(map, value)
+        for m, value in maps.items():
+            desc += "{}: {}\n".format(m, value)
             if desc.count("\n") > 5:
                 break
 
@@ -722,9 +712,9 @@ def prepareConfig():
 guildmessages = {}
 
 
-async def sendPlaytimes(servers):
+async def sendPlaytimes(localServers):
     global guildmessages
-    for server in servers:
+    for server in localServers:
         for guild in client.guilds:
             if guild.id not in guildmessages.keys():
                 guildmessages[guild.id] = {}
@@ -811,24 +801,24 @@ def getMissingPlayers(oldList, newList):
     return cleanList(result)
 
 
-def cleanList(list):
-    while "" in list:
-        list.remove("")
-    return list
+def cleanList(l):
+    while "" in l:
+        l.remove("")
+    return l
 
 
 def loadPlayers():
     if not os.path.exists(dir + "/players"):
         return
-    players = []
+    plist = []
     for file in os.listdir(dir + "/players"):
         with open(dir + "/players/" + file, encoding="utf-8") as f:
             text = f.read()
             if not text:
                 continue
             player = Player().construct(text)
-            players.append(player)
-    return players
+            plist.append(player)
+    return plist
 
 
 def getPlayer(name):
@@ -861,8 +851,8 @@ def formatTime(seconds: int):
     return "{:0.2f} {}".format(seconds / result.value, result.name.title())
 
 
-def generateLeaderboard(players):
-    ps = sorted(players.items(), key=lambda kv: kv[1], reverse=True)
+def generateLeaderboard(plist):
+    ps = sorted(plist.items(), key=lambda kv: kv[1], reverse=True)
     result = []
     for player in ps:
         player = player[0]
@@ -909,6 +899,5 @@ async def updatePlayers():
 
 
 if __name__ == "__main__":
-    with open(dir + "/secret.txt", encoding="utf-8") as f:
-        key = f.readline()
-    client.run(key)
+    prepareConfig()
+    client.run(config["Token"])
