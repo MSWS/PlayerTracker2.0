@@ -2,8 +2,10 @@
 import os
 import shutil
 import math
+import sys
 import time
 import datetime
+
 from dateutil import tz
 
 import asyncio
@@ -91,6 +93,7 @@ async def on_ready():
                      aliases=["g", "gg", "cg"]))
     dUtils.registerComand(
         StatisticsCommand("Statistics", "View bot/player statistics", "statistics <server>", ["stats", "uptime"]))
+    dUtils.registerComand(RestartCommand("Restart", "Restarts the bot", permission="administrator"))
     dUtils.registerComand(HelpCommand("Help", "Gets help"))
     act = discord.Activity(type=discord.ActivityType.watching, name="DEFY Servers")
     await client.change_presence(activity=act)
@@ -373,7 +376,7 @@ class Session(object):
     def getTime(self):
         return time.time() - self.timeOn if self.timeOff == -1 else self.timeOff - self.timeOn
 
-    def logoff(self):  # 9
+    def logoff(self):
         self.timeOff = time.time()
 
     def logon(self):
@@ -632,7 +635,7 @@ class GraphCommand(dUtils.Command):
 
         if args[0] in servers:
             server = servers[args[0]]
-            return await msg.channel.send(server.generatePlayerPlot(span, period))
+            return await msg.channel.send(file=server.generatePlayerPlot(span, period, period / 2))
 
         if not player:
             return await dUtils.sendMessage(msg.channel, "No playtime data for {}.".format(" ".join(args[:pLength])))
@@ -646,6 +649,15 @@ class RefreshCommand(dUtils.Command):
         global players
         players = loadPlayers()
         return await dUtils.sendMessage(msg.channel, "Successfully updated playtimes manually.")
+
+
+class RestartCommand(dUtils.Command):
+    async def exec(self, msg: discord.Message, args):
+        await dUtils.sendMessage(msg.channel, "Saving player data...")
+        for player in players:
+            player.save()
+        await dUtils.sendMessage(msg.channel, "Success! Restarting...")
+        restart()
 
 
 class StatisticsCommand(dUtils.Command):
@@ -861,10 +873,10 @@ def generateLeaderboard(plist):
 
 
 def strToSeconds(string: str):
-    # 3 seconds, 10 minutes
     string = string.replace(" ", "").replace(",", "")
     n = ""
     t = 0
+
     for c in string:
         if c.isnumeric() or c == ".":
             n += c
@@ -878,14 +890,18 @@ def strToSeconds(string: str):
 
 
 def getTimespan(c: str):
-    c = c.lower()
-    if c == "s": return Timespan.SECONDS
+    if c.lower() == "s": return Timespan.SECONDS
     if c == "m": return Timespan.MINUTES
-    if c == "h": return Timespan.HOURS
-    if c == "d": return Timespan.DAYS
-    if c == "w": return Timespan.WEEKS
-    if c == "mo": return Timespan.MONTHS
-    if c == "y": return Timespan.YEARS
+    if c.lower() == "h": return Timespan.HOURS
+    if c.lower() == "d": return Timespan.DAYS
+    if c.lower() == "w": return Timespan.WEEKS
+    if c == "M": return Timespan.MONTHS
+    if c.lower() == "y": return Timespan.YEARS
+
+
+def restart():
+    print(sys.executable, sys.argv)
+    os.execv("/usr/bin/python3", ['python'] + sys.argv)
 
 
 async def updatePlayers():
