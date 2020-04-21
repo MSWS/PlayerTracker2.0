@@ -48,6 +48,7 @@ config = {}
 startTime = time.time()
 
 zone = tz.gettz("US/Pacific")
+version = "BETA-1.0.1"
 
 
 # Main
@@ -94,9 +95,12 @@ async def on_ready():
     dUtils.registerComand(
         StatisticsCommand("Statistics", "View bot/player statistics", "statistics <server>", ["stats", "uptime"]))
     dUtils.registerComand(RestartCommand("Restart", "Restarts the bot", permission="administrator"))
+    dUtils.registerComand(
+        MostActiveCommand("MostActive", "Get when someone was most active", "mostactive <timespan> [period]",
+                          ["ma", "active"]))
     dUtils.registerComand(HelpCommand("Help", "Gets help"))
     act = discord.Activity(type=discord.ActivityType.watching, name="DEFY Servers")
-    await client.change_presence(activity=act)
+    await client.change_presence(status=discord.Status.online, activity=act)
     client.loop.create_task(main())
 
 
@@ -145,7 +149,7 @@ class Server(object):
 
         if newMap:
             if newMap != self.map:
-                self.maps[newMap] = 1 if map not in self.maps else self.maps[newMap] + 1
+                self.maps[newMap] = self.maps[newMap] + 1 if map in self.maps else 1
             self.map = newMap
 
         online = sp.getPlayers(self.address, self.port)
@@ -657,6 +661,7 @@ class RestartCommand(dUtils.Command):
         for player in players:
             player.save()
         await dUtils.sendMessage(msg.channel, "Success! Restarting...")
+        await client.change_presence(status=discord.Status.offline)
         restart()
 
 
@@ -664,37 +669,50 @@ class StatisticsCommand(dUtils.Command):
     async def exec(self, msg: discord.Message, args):
         global players, startTime, servers
         if len(args) == 0:
+            result = []
             embed = createEmbed("Player Statistics", "", discord.Color.green())
             embed.add_field(name="Total Players", value=str(len(players)))
+            embed.add_field(name="Servers", value=", ".join(config["Servers"]))
+            result.append(await dUtils.sendMessage(msg.channel, embed))
+
+            embed = createEmbed("Bot Statistics", "", discord.Color.dark_blue())
+            embed.add_field(name="Server Count", value="{}".format(len(client.guilds)))
+            embed.add_field(name="Version", value=version)
             embed.add_field(name="Uptime", value=formatTime(time.time() - startTime))
             embed.add_field(name="Ping", value="{}".format(int(client.latency * 1000)))
-            embed.add_field(name="Servers", value=", ".join(config["Servers"]))
-            return await dUtils.sendMessage(msg.channel, embed)
+            result.append(await dUtils.sendMessage(msg.channel, embed))
+            return result
         if args[0] not in config["Servers"]:
             return await dUtils.sendMessage(msg.channel, "Unknown server.")
 
         server = servers[args[0]]
         desc = ""
-        maps = dict(sorted(server.maps.items(), key=lambda kv: (kv[0], kv[1])))
+        maps = dict(sorted(server.maps.items(), key=lambda kv: (kv[0], kv[1]), reverse=True))
 
         knownPlayers = {}
 
+        times = [Timespan.DAYS, Timespan.DAYS.value * 3, Timespan.WEEKS, Timespan.MONTHS, Timespan.YEARS, -1]
+
         for player in players:
-            for span in [Timespan.DAYS, Timespan.WEEKS, Timespan.MONTHS, Timespan.YEARS, -1]:
-                index = -1 if span == -1 else span.value
+            for span in times:
+                index = span if isinstance(span, int) else span.value
                 if player.getTimeSince(index, server.name):
                     knownPlayers[index] = knownPlayers[index] + 1 if index in knownPlayers else 1
 
         desc += "Total Players in:\n"
 
-        for frame, amo in knownPlayers.items():
-            desc += "{}: {:d}\n".format("All Time" if frame == -1 else formatTime(frame), amo)
+        for frame in times:
+            t = frame if isinstance(frame, int) else frame.value
+            desc += "{}: {:d}\n".format("All Time" if frame == -1 else formatTime(t), knownPlayers[t])
 
         desc += "\nMaps\n"
 
+        amo = 0
+
         for m, value in maps.items():
             desc += "{}: {}\n".format(m, value)
-            if desc.count("\n") > 5:
+            amo += 1
+            if amo >= 5:
                 break
 
         embed = createEmbed("Server Statistics {}".format(args[0]), desc, discord.Color.blue())
@@ -710,6 +728,24 @@ class StatisticsCommand(dUtils.Command):
         await dUtils.sendMessage(msg.channel, embed)
 
         return await msg.channel.send(file=server.generateLatencyPlot())
+
+
+class MostActiveCommand(dUtils.Command):
+    async def exec(self, msg: discord.Message, args):
+        if len(args) < 2:
+            return await dUtils.sendMessage(msg.channel, "Please supply a player and timeframe")
+        player = getPlayer(args[0])
+        period = strToSeconds(args[-1])
+        span = strToSeconds(args[-2]) if len(args) > 2 else Timespan.YEARS.value
+
+        values = player.generatePlotValues(span, period)
+        big = max(values)
+        index = len(values) - values.index(big)
+        t = time.time() - (index * (span / period))
+        return await dUtils.sendMessage(msg.channel, "{} was most active for {} from {} to {}, they achieved {}." \
+                                        .format(player.name, formatTime(period), formatToDate(t),
+                                                formatToDate(t + period),
+                                                formatTime(big * 60 * 60)))
 
 
 def prepareConfig():
@@ -858,8 +894,9 @@ def formatTime(seconds: int):
         t: Timespan
         if seconds >= t.value:
             result = t
-    if seconds == result.value:
-        return "1 " + result.name.title()[:-1]
+    if round(seconds / result.value) == seconds / result.value:
+        return str(int(seconds / result.value)) + " " + result.name.title()[:-1] + (
+            "" if seconds / result.value == 1 else "s")
     return "{:0.2f} {}".format(seconds / result.value, result.name.title())
 
 
@@ -868,7 +905,7 @@ def generateLeaderboard(plist):
     result = []
     for player in ps:
         player = player[0]
-        result.append(player.name + ": " + formatTime(players[player]))
+        result.append(player.name + ": " + formatTime(plist[player]))
     return result
 
 
@@ -900,7 +937,6 @@ def getTimespan(c: str):
 
 
 def restart():
-    print(sys.executable, sys.argv)
     os.execv("/usr/bin/python3", ['python'] + sys.argv)
 
 
