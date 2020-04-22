@@ -63,7 +63,7 @@ async def main():
     addLogMessage("Main Method Called")
     global players, servers
     servers = {}
-    players = loadPlayers()
+    # players = loadPlayers()
 
     for server in config["Servers"]:
         addLogMessage("Parsed {} in config".format(server))
@@ -81,13 +81,13 @@ async def main():
     addLogMessage("Purging messages...")
 
     for guild in client.guilds:
-        addLogMessage("Purging: {}".format(guild.name))
+        addLogMessage("Purging server: {}".format(guild.name))
         await getChannel(guild, config["ChannelName"]).purge(limit=100)
 
     addLogMessage("Messages purged.")
 
     while True:
-        addLogMessage("Main Loop Called")
+        addLogMessage("Main Loop Called, refresing servers...")
         for server in servers.values():
             server.refresh()
         await sendPlaytimes(servers.values())
@@ -163,7 +163,6 @@ class Server(object):
         self.pings = {}
 
     def refresh(self):
-        addLogMessage("{} is refreshing...".format(self.name))
         global startTime
         pingIndex = int((time.time() - startTime) * 1000)
         if not sp.isServerUp(self.address, self.port):
@@ -180,7 +179,7 @@ class Server(object):
 
         if newMap:
             if newMap != self.map:
-                self.maps[newMap] = self.maps[newMap] + 1 if map in self.maps else 1
+                self.maps[newMap] = self.maps[newMap] + 1 if newMap in self.maps else 1
             self.map = newMap
 
         online = sp.getPlayers(self.address, self.port)
@@ -937,7 +936,9 @@ def cleanList(l):
 
 
 def loadPlayers():
+    addLogMessage("Reloading all players... [HEAVY OPERATION]")
     if not os.path.exists(dir + "/players"):
+        addLogMessage("Player directory does not exist, cancelling.")
         return
     plist = []
     for file in os.listdir(dir + "/players"):
@@ -962,7 +963,7 @@ def getPlayer(name):
 
 
 def formatToDate(t):
-    return datetime.datetime.fromtimestamp(t).strftime("%I:%M:%S %p %m/%d/%Y")
+    return datetime.datetime.fromtimestamp(t, tz=zone).strftime("%I:%M:%S %p %m/%d/%Y")
 
 
 def playerSort(a: Player, b: Player):
@@ -1029,7 +1030,7 @@ async def updatePlayers():
             for player in players:
                 player.save()
         players = loadPlayers()
-        await asyncio.sleep(60)
+        await asyncio.sleep(60 * 5)
 
 
 if __name__ == "__main__":
