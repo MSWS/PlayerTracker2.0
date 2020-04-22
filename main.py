@@ -48,26 +48,46 @@ config = {}
 startTime = time.time()
 
 zone = tz.gettz("US/Pacific")
-version = "BETA-1.0.1"
+version = "BETA-1.0.2"
+
+logs = ["BEGIN LOGGING - PlayerTracker created by MSWS",
+        "Log initialization started at {}".format(time.time()),
+        "Start time set to {}".format(startTime),
+        "Version: {}".format(version),
+        "Timezone: {}".format(zone),
+        "Separator: '{}'".format(separator), ""]
 
 
 # Main
 async def main():
+    addLogMessage("Main Method Called")
     global players, servers
     servers = {}
     players = loadPlayers()
 
     for server in config["Servers"]:
+        addLogMessage("Parsed {} in config".format(server))
         address = config["Servers"][server].split(":")[0]
         port = int(config["Servers"][server].split(":")[1])
         servers[server] = Server(server, address, port)
+        addLogMessage("Added server {}".format(servers[server]))
+
+    addLogMessage("Finished parsing servers, total server count: {}".format(len(servers)))
+    addLogMessage("Starting updatePlayers task...")
 
     client.loop.create_task(updatePlayers())
 
+    addLogMessage("updatePlayers task successfully started.")
+    addLogMessage("Purging messages...")
+
     for guild in client.guilds:
+        addLogMessage("Purging: {}".format(guild.name))
         await getChannel(guild, config["ChannelName"]).purge(limit=100)
 
+    addLogMessage("Messages purged.")
+
     while True:
+        addLogMessage("Main Loop Called")
         for server in servers.values():
             server.refresh()
         await sendPlaytimes(servers.values())
@@ -76,29 +96,37 @@ async def main():
 
 @client.event
 async def on_ready():
+    addLogMessage("OnReady Called, Registering Commands...")
     dUtils.init(client)
     client.remove_command("help")
-    dUtils.registerComand(PlaytimeCommand("Playtime", "List player's playtimes", aliases=["pt"]))
-    dUtils.registerComand(RefreshCommand("Refresh", "Refreshses all playtimes", aliases=["ref", "update", "u"]))
+    dUtils.registerComand(RestartCommand("Restart", "Restarts the bot", permission="administrator"))
     dUtils.registerComand(
         DeletePlaytimeCommand("DeletePlaytime", "Delete's a player's playtime", aliases=["dp"],
                               permission="administrator"))
+    dUtils.registerComand(PlaytimeCommand("Playtime", "List player's playtimes", aliases=["pt"]))
+
     dUtils.registerComand(PlayerInfoCommand("PlayerInfo", "Get's playtime information", "playerinfo [player]", ["pi"]))
-    dUtils.registerComand(SaveCommand("Save", "Save player data"))
+
+    dUtils.registerComand(
+        GraphCommand("Graph", "Generate graph of player's playtime", "graph [player/server] [timespan] <period>",
+                     aliases=["g", "gg", "cg"]))
     dUtils.registerComand(
         GetNewPlayersCommand("GetNewPlayers", "Lookup who has recently just joined the server",
                              "getnewplayers <timespan>",
                              ["gnp", "fnp", "np", "new"]))
     dUtils.registerComand(
-        GraphCommand("Graph", "Generate graph of player's playtime", "graph [timespan] <period>",
-                     aliases=["g", "gg", "cg"]))
-    dUtils.registerComand(
-        StatisticsCommand("Statistics", "View bot/player statistics", "statistics <server>", ["stats", "uptime"]))
-    dUtils.registerComand(RestartCommand("Restart", "Restarts the bot", permission="administrator"))
-    dUtils.registerComand(
         MostActiveCommand("MostActive", "Get when someone was most active", "mostactive <timespan> [period]",
                           ["ma", "active"]))
+    dUtils.registerComand(
+        StatisticsCommand("Statistics", "View bot/player statistics", "statistics <server>",
+                          ["stats", "uptime", "author", "info", "hi"]))
+    dUtils.registerComand(RefreshCommand("Refresh", "Refreshses all playtimes", aliases=["ref", "update", "u"]))
+    dUtils.registerComand(SaveCommand("Save", "Save player data"))
+    dUtils.registerComand(LogCommand("Log", "Get bot logs", aliases=["logs"]))
     dUtils.registerComand(HelpCommand("Help", "Gets help"))
+
+    addLogMessage("Commands successfully registered ({})".format(len(dUtils.registeredCommands)))
+
     act = discord.Activity(type=discord.ActivityType.watching, name="DEFY Servers")
     await client.change_presence(status=discord.Status.online, activity=act)
     client.loop.create_task(main())
@@ -116,7 +144,8 @@ class Timespan(Enum):
 
 
 class Server(object):
-    def __init__(self, name, address, port):
+    def __init__(self, name, address, port=27015):
+        addLogMessage("Creating a new server: {}, {}, {}".format(name, address, port))
         self.name = name
         self.address = address
         self.port = port if isinstance(port, int) else int(port)
@@ -134,12 +163,14 @@ class Server(object):
         self.pings = {}
 
     def refresh(self):
+        addLogMessage("{} is refreshing...".format(self.name))
         global startTime
         pingIndex = int((time.time() - startTime) * 1000)
         if not sp.isServerUp(self.address, self.port):
             self.players = {}
             self.online = False
             self.pings[pingIndex] = 0
+            addLogMessage("{} is offline.".format(self.name))
             return
         self.online = True
         info = sp.getInfo(self.address, self.port)
@@ -228,6 +259,7 @@ class Server(object):
 class Player(object):
 
     def __init__(self):
+        addLogMessage("Creating a new player...")
         self.name = None
         self.file = dir + "/players/default.txt"
         self.online = False
@@ -236,12 +268,15 @@ class Player(object):
         self.sessions = []
 
     def createNew(self, name):
+        addLogMessage("Creating a new player from name: {}".format(name))
         self.name = name
         self.file = dir + "/players/" + slugify(self.name) + ".txt"
         if os.path.exists(self.file):
+            addLogMessage("Data file does exist for {}, loading data...".format(name))
             with open(self.file, encoding="utf-8") as f:
                 text = f.read()
                 self.construct(text)
+            addLogMessage("Data successfully loaded for {}".format(name))
         return self
 
     def construct(self, string: str):
@@ -282,6 +317,7 @@ class Player(object):
         return result
 
     def logoff(self):
+        addLogMessage("{} logged off.".format(self.name))
         self.session.logoff()
         self.sessions.append(self.session)
         self.save()
@@ -289,6 +325,7 @@ class Player(object):
         self.online = False
 
     def logon(self, server):
+        addLogMessage("{} logged on to {}.".format(self.name, server.name))
         self.session = Session().createNew(server.name)
         self.online = True
 
@@ -395,6 +432,7 @@ class Session(object):
 
 class PlayerInfoCommand(dUtils.Command):
     async def exec(self, msg: discord.Message, args):
+        addLogMessage("{} ran {}. Arguments: {}".format(msg.author.name, self.name, args))
         if len(args) == 0:
             return await dUtils.sendMessage(msg.channel, "Please specify a player to lookup.")
         name = " ".join(args)
@@ -439,6 +477,7 @@ class PlayerInfoCommand(dUtils.Command):
 
 class HelpCommand(dUtils.Command):
     async def exec(self, msg: discord.Message, args):
+        addLogMessage("{} ran {}. Arguments: {}".format(msg.author.name, self.name, args))
         desc = ["Format: .[command] <args>", ""]
 
         for cmd in dUtils.registeredCommands.values():
@@ -451,11 +490,16 @@ class HelpCommand(dUtils.Command):
                 desc.append("(**{}**)".format(cmd.permission.title()))
             desc.append("")
 
-        return [await dUtils.Pageable(desc, "Help", msg.author, msg.channel, color=discord.Color.purple()).send()]
+        pageable = dUtils.Pageable(desc, "Help", msg.author, msg.channel, color=discord.Color.purple())
+        pageable.size = 20
+        return await pageable.send()
+
+        # return [await dUtils.Pageable(desc, "Help", msg.author, msg.channel, color=discord.Color.purple()).send()]
 
 
 class SaveCommand(dUtils.Command):
     async def exec(self, msg: discord.Message, args):
+        addLogMessage("{} ran {}. Arguments: {}".format(msg.author.name, self.name, args))
         for player in players:
             player.save()
         return await dUtils.sendMessage(msg.channel, "Successfully saved player data.")
@@ -463,6 +507,7 @@ class SaveCommand(dUtils.Command):
 
 class GetNewPlayersCommand(dUtils.Command):
     async def exec(self, msg: discord.Message, args):
+        addLogMessage("{} ran {}. Arguments: {}".format(msg.author.name, self.name, args))
         global players
         span = Timespan.DAYS.value
         if len(args) > 0:
@@ -488,6 +533,7 @@ class GetNewPlayersCommand(dUtils.Command):
 
 class DeletePlaytimeCommand(dUtils.Command):
     async def exec(self, msg: discord.Message, args):
+        addLogMessage("{} ran {}. Arguments: {}".format(msg.author.name, self.name, args))
         if len(args) == 0:
             return [await dUtils.sendMessage(msg.channel, "Please specify a username or all")]
 
@@ -521,6 +567,7 @@ class ConfirmDelete(dUtils.ConfirmMessage):
 
 class PlaytimeCommand(dUtils.Command):
     async def exec(self, msg: discord.Message, args):
+        addLogMessage("{} ran {}. Arguments: {}".format(msg.author.name, self.name, args))
         global players
         leaderboard = {}
         if len(args) == 0:
@@ -616,6 +663,7 @@ class PlaytimeCommand(dUtils.Command):
 
 class GraphCommand(dUtils.Command):
     async def exec(self, msg: discord.Message, args):
+        addLogMessage("{} ran {}. Arguments: {}".format(msg.author.name, self.name, args))
         period = Timespan.DAYS.value
 
         if len(args) == 1 and args[0] in servers:
@@ -650,6 +698,7 @@ class GraphCommand(dUtils.Command):
 
 class RefreshCommand(dUtils.Command):
     async def exec(self, msg: discord.Message, args):
+        addLogMessage("{} ran {}. Arguments: {}".format(msg.author.name, self.name, args))
         global players
         players = loadPlayers()
         return await dUtils.sendMessage(msg.channel, "Successfully updated playtimes manually.")
@@ -657,6 +706,7 @@ class RefreshCommand(dUtils.Command):
 
 class RestartCommand(dUtils.Command):
     async def exec(self, msg: discord.Message, args):
+        addLogMessage("{} ran {}. Arguments: {}".format(msg.author.name, self.name, args))
         await dUtils.sendMessage(msg.channel, "Saving player data...")
         for player in players:
             player.save()
@@ -667,20 +717,23 @@ class RestartCommand(dUtils.Command):
 
 class StatisticsCommand(dUtils.Command):
     async def exec(self, msg: discord.Message, args):
+        addLogMessage("{} ran {}. Arguments: {}".format(msg.author.name, self.name, args))
         global players, startTime, servers
         if len(args) == 0:
             result = []
-            embed = createEmbed("Player Statistics", "", discord.Color.green())
+            embed = createEmbed("Statistics", "", discord.Color.green())
             embed.add_field(name="Total Players", value=str(len(players)))
             embed.add_field(name="Servers", value=", ".join(config["Servers"]))
-            result.append(await dUtils.sendMessage(msg.channel, embed))
-
-            embed = createEmbed("Bot Statistics", "", discord.Color.dark_blue())
             embed.add_field(name="Server Count", value="{}".format(len(client.guilds)))
             embed.add_field(name="Version", value=version)
             embed.add_field(name="Uptime", value=formatTime(time.time() - startTime))
             embed.add_field(name="Ping", value="{}".format(int(client.latency * 1000)))
             result.append(await dUtils.sendMessage(msg.channel, embed))
+
+            with open("players.txt", "w+", encoding="utf-8") as f:
+                for index, player in enumerate(players):
+                    f.write(player.name + (", " if index < len(players) - 1 else ""))
+                await msg.channel.send(file=discord.File("players.txt"))
             return result
         if args[0] not in config["Servers"]:
             return await dUtils.sendMessage(msg.channel, "Unknown server.")
@@ -746,6 +799,34 @@ class MostActiveCommand(dUtils.Command):
                                         .format(player.name, formatTime(period), formatToDate(t),
                                                 formatToDate(t + period),
                                                 formatTime(big * 60 * 60)))
+
+
+class LogCommand(dUtils.Command):
+    async def exec(self, msg: discord.Message, args):
+        addLogMessage("{} ran {}. Arguments: {}".format(msg.author.name, self.name, args))
+        global logs
+        line = ""
+        amo = 1
+        result = []
+        for l in logs:
+            if l == line:
+                amo += 1
+            else:
+                if amo > 1:
+                    result.append(line + " x" + str(amo))
+                else:
+                    result.append(line)
+                line = l
+                amo = 1
+
+        with open("output.log", "w+", encoding="utf-8") as f:
+            f.write("\n".join(result))
+        return await msg.channel.send(file=discord.File("output.log"))
+
+
+def addLogMessage(message):
+    global logs
+    logs.append(formatToDate(int(time.time())) + ": " + str(message))
 
 
 def prepareConfig():
@@ -880,8 +961,8 @@ def getPlayer(name):
             return player
 
 
-def formatToDate(time):
-    return datetime.datetime.fromtimestamp(time).strftime("%I:%M:%S %p %m/%d/%Y")
+def formatToDate(t):
+    return datetime.datetime.fromtimestamp(t).strftime("%I:%M:%S %p %m/%d/%Y")
 
 
 def playerSort(a: Player, b: Player):
@@ -944,6 +1025,7 @@ async def updatePlayers():
     global players
     while True:
         if players:
+            addLogMessage("Saving player data.")
             for player in players:
                 player.save()
         players = loadPlayers()
