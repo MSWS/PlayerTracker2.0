@@ -48,7 +48,7 @@ config = {}
 startTime = time.time()
 
 zone = tz.gettz("US/Pacific")
-version = "BETA-1.0.2"
+version = "1.0.1"
 
 logs = ["BEGIN LOGGING - PlayerTracker created by MSWS",
         "Log initialization started at {}".format(time.time()),
@@ -63,7 +63,8 @@ async def main():
     addLogMessage("Main Method Called")
     global players, servers
     servers = {}
-    # players = loadPlayers()
+
+    loadAllPlayers()
 
     for server in config["Servers"]:
         addLogMessage("Parsed {} in config".format(server))
@@ -75,7 +76,7 @@ async def main():
     addLogMessage("Finished parsing servers, total server count: {}".format(len(servers)))
     addLogMessage("Starting updatePlayers task...")
 
-    client.loop.create_task(updatePlayers())
+    client.loop.create_task(updatePlayerTask())
 
     addLogMessage("updatePlayers task successfully started.")
     addLogMessage("Purging messages...")
@@ -281,6 +282,7 @@ class Player(object):
     def construct(self, string: str):
         args = string.splitlines()
         self.name = args[0]
+        self.file = dir + "/players/" + slugify(self.name) + ".txt"
         for sess in args[1:]:
             self.sessions.append(Session().fromString(sess))
         if not os.path.exists(self.file):
@@ -539,10 +541,10 @@ class DeletePlaytimeCommand(dUtils.Command):
         p = getPlayer(" ".join(args))
         name = p.name if p else " ".join(args)
 
-        if not os.path.exists(dir + "/players/" + slugify(name) + ".txt") and args[0] != "all":
+        if not p and args[0] != "all":
             return await dUtils.sendMessage(msg.channel, "**{}** was not found.".format(dUtils.raw(name)))
         return await ConfirmDelete("Do you really want to delete **{}** player data?".format(dUtils.raw(name)),
-                                   msg.author, slugify(name)).send(msg.channel)
+                                   msg.author, p).send(msg.channel)
 
 
 class ConfirmDelete(dUtils.ConfirmMessage):
@@ -555,13 +557,13 @@ class ConfirmDelete(dUtils.ConfirmMessage):
         if self.target == "all":
             shutil.rmtree(dir + "/players")
             players = []
-            await updatePlayers()
             return await dUtils.sendMessage(self.sent.channel, "Successfully deleted all player data.")
         else:
-            players = loadPlayers()
+            # loadPlayers()
+            players.remove(self.target)
             await self.sent.channel.send("Successfully deleted player data of {}.".format(self.target),
-                                         file=discord.File(dir + "/players/" + self.target + ".txt"))
-            os.remove(dir + "/players/" + self.target + ".txt")
+                                         file=discord.File(self.target.file))
+            os.remove(self.target.file)
 
 
 class PlaytimeCommand(dUtils.Command):
@@ -699,7 +701,7 @@ class RefreshCommand(dUtils.Command):
     async def exec(self, msg: discord.Message, args):
         addLogMessage("{} ran {}. Arguments: {}".format(msg.author.name, self.name, args))
         global players
-        players = loadPlayers()
+        loadPlayers()
         return await dUtils.sendMessage(msg.channel, "Successfully updated playtimes manually.")
 
 
@@ -739,7 +741,6 @@ class StatisticsCommand(dUtils.Command):
 
         server = servers[args[0]]
         desc = ""
-        maps = dict(sorted(server.maps.items(), key=lambda kv: (kv[0], kv[1]), reverse=True))
 
         knownPlayers = {}
 
@@ -760,9 +761,10 @@ class StatisticsCommand(dUtils.Command):
         desc += "\nMaps\n"
 
         amo = 0
+        maps = sorted(server.maps.items(), key=lambda kv: kv[1], reverse=True)
 
-        for m, value in maps.items():
-            desc += "{}: {}\n".format(m, value)
+        for value in maps:
+            desc += "{}: {}\n".format(value[0], value[1])
             amo += 1
             if amo >= 5:
                 break
@@ -935,20 +937,40 @@ def cleanList(l):
     return l
 
 
-def loadPlayers():
-    addLogMessage("Reloading all players... [HEAVY OPERATION]")
+def loadAllPlayers():
+    global players
+    addLogMessage("Loading all players... [HEAVY OPERATION]")
     if not os.path.exists(dir + "/players"):
         addLogMessage("Player directory does not exist, cancelling.")
         return
-    plist = []
+    players = []
     for file in os.listdir(dir + "/players"):
         with open(dir + "/players/" + file, encoding="utf-8") as f:
             text = f.read()
             if not text:
                 continue
             player = Player().construct(text)
-            plist.append(player)
-    return plist
+            players.append(player)
+
+
+def loadPlayers():
+    addLogMessage("Loading online players...")
+    global players, servers
+    if not os.path.exists(dir + "/players"):
+        addLogMessage("Player directory does not exist, cancelling.")
+        return
+    for server in servers.values():
+        for p in server.players:
+            player = getPlayer(p)
+            addLogMessage("Loading player {}, got player {}".format(p, player.file))
+            with open(player.file, encoding="utf-8") as f:
+                text = f.read()
+                if not text:
+                    addLogMessage("Player data for {} is None.".format(player.name))
+                    continue
+                players.remove(player)
+                player = Player().construct(text)
+                players.append(player)
 
 
 def getPlayer(name):
@@ -1022,15 +1044,15 @@ def restart():
     os.execv("/usr/bin/python3", ['python'] + sys.argv)
 
 
-async def updatePlayers():
+async def updatePlayerTask():
     global players
     while True:
-        if players:
-            addLogMessage("Saving player data.")
-            for player in players:
-                player.save()
-        players = loadPlayers()
-        await asyncio.sleep(60 * 5)
+        # if players:
+        #     addLogMessage("Saving player data.")
+        #     for player in players:
+        #         player.save()
+        loadPlayers()
+        await asyncio.sleep(60)
 
 
 if __name__ == "__main__":
