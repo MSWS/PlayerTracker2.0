@@ -48,7 +48,7 @@ config = {}
 startTime = time.time()
 
 zone = tz.gettz("US/Pacific")
-version = "1.0.1"
+version = "1.0.2"
 
 logs = ["BEGIN LOGGING - PlayerTracker created by MSWS",
         "Log initialization started at {}".format(time.time()),
@@ -91,7 +91,10 @@ async def main():
         addLogMessage("Main Loop Called, refresing servers...")
         for server in servers.values():
             server.refresh()
-        await sendPlaytimes(servers.values())
+        try:
+            await sendPlaytimes(servers.values())
+        except discord.HTTPException:
+            addLogMessage("HTTPException occured when sending playtimes")
         await asyncio.sleep(20)
 
 
@@ -613,13 +616,13 @@ class PlaytimeCommand(dUtils.Command):
 
             if not player:
                 return dUtils.sendMessage(msg.channel, "Unknown player.")
-
-            for index, line in enumerate(result):
-                if player.name in line:
-                    page = index
             embed = dUtils.Pageable(result, "Leaderboard (" + player.name + ")", msg.author, msg.channel,
                                     color=discord.Color.green())
-            page = math.ceil(page / embed.size) - 1
+            for index, line in enumerate(result):
+                if player.name in line:
+                    page = math.ceil((index + 1) / embed.size) - 1
+                    break
+
             embed.page = page
 
             return await embed.send()
@@ -642,7 +645,7 @@ class PlaytimeCommand(dUtils.Command):
                                         color=discord.Color.green())
                 for index, line in enumerate(result):
                     if target.name in line:
-                        page = math.ceil(index / embed.size) - 1
+                        page = math.ceil((index + 1) / embed.size) - 1
                         break
                 embed.page = page
 
@@ -1004,12 +1007,15 @@ def formatTime(seconds: int):
     return "{:0.2f} {}".format(seconds / result.value, result.name.title())
 
 
-def generateLeaderboard(plist):
+def generateLeaderboard(plist, numbered=True):
     ps = sorted(plist.items(), key=lambda kv: kv[1], reverse=True)
     result = []
-    for player in ps:
+    for index, player in enumerate(ps):
         player = player[0]
-        result.append(player.name + ": " + formatTime(plist[player]))
+        if numbered:
+            result.append("{}. {}: {}".format(index + 1, player.name, formatTime(plist[player])))
+        else:
+            result.append("{}: {}".format(player.name, formatTime(plist[player])))
     return result
 
 
