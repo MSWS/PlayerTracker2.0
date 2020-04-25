@@ -74,11 +74,11 @@ async def main():
         addLogMessage("Added server {}".format(servers[server]))
 
     addLogMessage("Finished parsing servers, total server count: {}".format(len(servers)))
-    addLogMessage("Starting updatePlayers task...")
-
-    client.loop.create_task(updatePlayerTask())
-
-    addLogMessage("updatePlayers task successfully started.")
+    # addLogMessage("Starting updatePlayers task...")
+    #
+    # client.loop.create_task(updatePlayerTask())
+    #
+    # addLogMessage("updatePlayers task successfully started.")
     addLogMessage("Purging messages...")
 
     for guild in client.guilds:
@@ -88,9 +88,9 @@ async def main():
     addLogMessage("Messages purged.")
 
     while True:
-        addLogMessage("Main Loop Called, refresing servers...")
         for server in servers.values():
             server.refresh()
+        loadPlayers()
         try:
             await sendPlaytimes(servers.values())
         except discord.HTTPException:
@@ -108,12 +108,12 @@ async def on_ready():
         DeletePlaytimeCommand("DeletePlaytime", "Delete's a player's playtime", aliases=["dp"],
                               permission="administrator"))
     dUtils.registerComand(PlaytimeCommand("Playtime", "List player's playtimes", aliases=["pt"]))
-
     dUtils.registerComand(PlayerInfoCommand("PlayerInfo", "Get's playtime information", "playerinfo [player]", ["pi"]))
 
     dUtils.registerComand(
         GraphCommand("Graph", "Generate graph of player's playtime", "graph [player/server] [timespan] <period>",
                      aliases=["g", "gg", "cg"]))
+    dUtils.registerComand(TimezoneCommand("Timezone", "Sets the bot's timezone", "timezone pst", ["tz", "settz"]))
     dUtils.registerComand(
         GetNewPlayersCommand("GetNewPlayers", "Lookup who has recently just joined the server",
                              "getnewplayers <timespan>",
@@ -704,7 +704,7 @@ class RefreshCommand(dUtils.Command):
     async def exec(self, msg: discord.Message, args):
         addLogMessage("{} ran {}. Arguments: {}".format(msg.author.name, self.name, args))
         global players
-        loadPlayers()
+        loadAllPlayers()
         return await dUtils.sendMessage(msg.channel, "Successfully updated playtimes manually.")
 
 
@@ -826,6 +826,31 @@ class LogCommand(dUtils.Command):
         with open("output.log", "w+", encoding="utf-8") as f:
             f.write("\n".join(result))
         return await msg.channel.send(file=discord.File("output.log"))
+
+
+class TimezoneCommand(dUtils.Command):
+    async def exec(self, msg: discord.Message, args):
+        global zone
+        if not args:
+            return await dUtils.sendMessage(msg.channel, "The current timezone is **{}**.".format(zone))
+        z = dUtils.raw(args[0])
+
+        t = tz.gettz(z)
+        if t and len(args) > 1 and args[1] == "override" and getattr(msg.author.guild_permissions, "administrator",
+                                                                     False):
+            zone = t
+            return await dUtils.sendMessage(msg.channel, "Successfully set timezone to **{}**.".format(t))
+
+        if not t:
+            if z.lower() in ["pst", "pacific", "pacific standard time", "seattle", "wa", "washington", "utc-8", "-8"]:
+                if zone != tz.gettz("US/Pacific"):
+                    return await dUtils.sendMessage(msg.channel,
+                                                    "The timezone has manually been overridden and cannot be changed by you.")
+                return await dUtils.sendMessage(msg.channel, "Successfully set timezone to PST.")
+            return await dUtils.sendMessage(msg.channel, "**{}** is an invalid timezone.".format(z))
+
+        return await dUtils.sendMessage(msg.channel,
+                                        "**{}** is restricted due it being an incorrect timezone.".format(t))
 
 
 def addLogMessage(message):
@@ -965,6 +990,9 @@ def loadPlayers():
     for server in servers.values():
         for p in server.players:
             player = getPlayer(p)
+            if not player:
+                addLogMessage("Could not get a player from {}".format(p))
+                continue
             addLogMessage("Loading player {}, got player {}".format(p, player.file))
             with open(player.file, encoding="utf-8") as f:
                 text = f.read()
@@ -1048,17 +1076,6 @@ def getTimespan(c: str):
 
 def restart():
     os.execv("/usr/bin/python3", ['python'] + sys.argv)
-
-
-async def updatePlayerTask():
-    global players
-    while True:
-        # if players:
-        #     addLogMessage("Saving player data.")
-        #     for player in players:
-        #         player.save()
-        loadPlayers()
-        await asyncio.sleep(60)
 
 
 if __name__ == "__main__":
