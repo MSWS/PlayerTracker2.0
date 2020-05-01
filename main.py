@@ -88,9 +88,9 @@ async def main():
     addLogMessage("Messages purged.")
 
     while True:
+        loadPlayers()
         for server in servers.values():
             server.refresh()
-        loadPlayers()
         try:
             await sendPlaytimes(servers.values())
         except discord.HTTPException:
@@ -167,9 +167,12 @@ class Server(object):
         self.pings = {}
 
     def refresh(self):
-        global startTime
+        global startTime, players
         pingIndex = int((time.time() - startTime) * 1000)
         if not sp.isServerUp(self.address, self.port):
+            for player in self.players.values():
+                player.logoff()
+                player.save()
             self.players = {}
             self.online = False
             self.pings[pingIndex] = 0
@@ -203,6 +206,8 @@ class Server(object):
             p = Player().createNew(player)
             p.logon(self)
             self.players[player] = p
+            if p not in players:
+                players.append(p)
 
         for player in self.disconnected:
             if player not in self.players:
@@ -976,9 +981,12 @@ def loadAllPlayers():
         with open(dir + "/players/" + file, encoding="utf-8") as f:
             text = f.read()
             if not text:
+                print("Data for {} is null".format(file))
                 continue
             player = Player().construct(text)
+            addLogMessage("Successfully loaded {}".format(player.name))
             players.append(player)
+    addLogMessage("Finished loading all players.")
 
 
 def loadPlayers():
